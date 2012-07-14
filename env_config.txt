@@ -1,0 +1,16 @@
+###########################################################################
+##                          环境变量设置                                 ##
+##               (请勿改变=号左边的变量名，如jdkPath)                    ##
+###################======Environment Start======###########################
+
+#jdk路径
+jdkPath=C:\Program Files\Java\jdk1.6.0_02
+
+#sdk路径
+sdkPath=D:\development\android-sdk-windows
+
+#编译的android版本路径(不要漏了\)
+androidVersionPath=\platforms\android-4           
+
+#jdk的版本
+jdkVersion=1.6

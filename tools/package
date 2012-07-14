@@ -1,0 +1,156 @@
+@echo off
+
+rem jdk的路径
+set JavaHome=
+rem sdk的路径
+set AndroidHome=
+rem 编译的android版本路径
+set AndroidVersion=
+
+rem jdk的版本
+set JDK_Version=
+
+set PATH=%JavaHome%\bin;%AndroidHome%\tools;%AndroidHome%\platform-tools;%PATH%
+
+set apkname=%1
+set projectName=%2
+set originTag=%3
+set replaceTag=%4
+rem 签名用的key
+set apk_key=%5
+set apk_keypass=%6
+set apk_keystore=%7
+set appName=%8
+
+replaceTag.pl %projectName% %originTag% %replaceTag%
+
+set batDir=%~dp0
+
+rem 编译的android项目路径
+rem set AndroidProject=%batDir%%projectName%
+set AndroidProject=%projectName%
+
+rem 编译生成的未签名apk文件
+set unsign_apk=unsigned.apk
+rem 编译生成的已签名apk文件
+set sign_apk=%apkname%.apk
+
+
+set AndroidProjectRes=%AndroidProject%\res
+set AndroidProjectGen=%AndroidProject%\gen
+set AndroidProjectBin=%AndroidProject%\bin
+set AndroidProjectAsset=%AndroidProject%\assets
+set AndroidProjectAndroidMainfest=%AndroidProject%\AndroidManifest.xml
+
+rem perl -pi.bak -e "s/%originTag%/%replaceTag%/gi" %AndroidProjectAndroidMainfest%
+
+set AndroidJar=%AndroidHome%%AndroidVersion%\android.jar
+
+rem del /F/S/Q "%AndroidProjectBin%"
+
+if exist "%AndroidProjectBin%" rd /S/Q "%AndroidProjectBin%"
+
+md "%AndroidProjectBin%"
+
+if exist "%AndroidProjectGen%" rd /S/Q "%AndroidProjectGen%"
+
+md "%AndroidProjectGen%"
+
+echo shengcheng R.java
+call aapt p -f -m -J %AndroidProjectGen% -S %AndroidProjectRes% -I %AndroidJar% -M %AndroidProjectAndroidMainfest%
+
+if %errorlevel% NEQ 0 goto fail
+
+setlocal enabledelayedexpansion
+set ExternerJar=;
+for /r "%AndroidProject%\lib" %%x in (*.jar) do (set ExternerJar=%%x;!ExternerJar!)
+for /r "%AndroidProject%\lib" %%x in (*.jar) do (set LibJar=%%x !LibJar!)
+
+set jarFileName=jarFileName.cfg
+echo %AndroidJar% > %jarFileName%
+for /r "%AndroidProject%\lib" %%x in (*.jar) do (echo %%x >> %jarFileName%)
+writeProguardCfg.pl %jarFileName% %appName%
+
+set tempPathFile=temp_xxx
+
+for /r "%AndroidProject%\src" %%i in (*.java) do (instead.pl %AndroidProject% %%i 1 %tempPathFile%)
+for /r "%AndroidProject%\gen" %%i in (*.java) do (instead.pl %AndroidProject% %%i 0 %tempPathFile%)
+
+generate_self_javac.pl %JDK_Version% %AndroidJar% %ExternerJar% %AndroidProject% %tempPathFile%
+
+call self_javac
+set javac_result=%errorlevel%
+del self_javac.bat
+
+if %javac_result% NEQ 0 goto fail
+
+rem javac -encoding UTF-8 -source %JDK_Version% -bootclasspath %AndroidJar% -classpath %ExternerJar% -d %AndroidProjectBin% %AndroidProjectSrc%
+
+rem if %errorlevel% NEQ 0 goto fail
+
+
+pushd %AndroidProjectBin%
+jar cvf %batDir%pkg.jar *
+popd
+
+java -jar %AndroidHome%\tools\proguard\lib\proguard.jar @proguard.cfg
+
+call dx --dex --output=%AndroidProjectBin%\classes.dex %batDir%pkg_out.jar %LibJar%
+
+if %errorlevel% NEQ 0 goto fail
+
+del pkg.jar
+del pkg_out.jar
+del proguard.cfg
+
+if not exist %AndroidProjectAsset% goto packageWithoutAsset
+
+:packageWithAsset
+call aapt package -f -M %AndroidProjectAndroidMainfest% -S %AndroidProjectRes% -A %AndroidProjectAsset% -I %AndroidJar% -F %AndroidProjectBin%\resources.ap_
+if %errorlevel% NEQ 0 goto fail
+goto apkBuilder
+
+:packageWithoutAsset
+call aapt package -f -M %AndroidProjectAndroidMainfest% -S %AndroidProjectRes% -I %AndroidJar% -F %AndroidProjectBin%\resources.ap_
+if %errorlevel% NEQ 0 goto fail
+
+:apkBuilder
+for /r "%AndroidProject%\libs" %%x in (*.so) do (goto apkBuilderWithSo)
+
+:apkBuilderWithoutSo
+call apkbuilder %AndroidProjectBin%\%unsign_apk% -v -u -z %AndroidProjectBin%\resources.ap_ -f %AndroidProjectBin%\classes.dex -rf %AndroidProject%\src
+if %errorlevel% NEQ 0 goto fail
+goto sign
+
+:apkBuilderWithSo
+call apkbuilder %AndroidProjectBin%\%unsign_apk% -v -u -z %AndroidProjectBin%\resources.ap_ -f %AndroidProjectBin%\classes.dex -rf %AndroidProject%\src -nf %AndroidProject%\libs
+if %errorlevel% NEQ 0 goto fail
+
+:sign
+jarsigner -keystore %apk_keystore% -storepass %apk_keypass% %AndroidProjectBin%\%unsign_apk% %apk_key%
+
+if %errorlevel% NEQ 0 goto fail
+
+pushd %AndroidProject%
+
+del /S/Q %sign_apk%
+
+popd
+
+zipalign -v 4 %AndroidProjectBin%\%unsign_apk% %AndroidProject%\%sign_apk%
+
+if %errorlevel% NEQ 0 goto fail
+
+jarsigner -verify -verbose %AndroidProject%\%sign_apk%
+
+if %errorlevel% NEQ 0 goto fail
+
+echo signed-{tag_qudao} build success !
+echo success >result.txt
+goto end
+
+:fail
+echo signed-{tag_qudao} build failed !
+echo fail > result.txt
+pause
+:end
